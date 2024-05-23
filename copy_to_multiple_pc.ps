@@ -1,0 +1,14 @@
+# Define the source file path containing IPs
+$ipFilePath = "C:\path\to\your\ipfile.txt"
+
+# Read the IP addresses from the file into an array
+$computers = Get-Content $ipFilePath
+
+# Define the source file path
+$sourceFilePath = "C:\path\to\your\file.txt"
+
+# Loop through each computer and copy the file
+foreach ($computer in $computers) {
+    $destinationPath = "\\$computer\C$\destination\path\file.txt"
+    Copy-Item $sourceFilePath $destinationPath -Force
+}
