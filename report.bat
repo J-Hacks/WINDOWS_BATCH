@@ -21,6 +21,7 @@ set "ip=%1"
 set "root_path=\\!ip!\c$\Users"
 if not exist "!root_path!" exit /b
 
+
 echo Folders on !ip!:
 for /d %%F in ("!root_path!\*") do (
     echo %%F
