@@ -1,0 +1,121 @@
+function InsertAuditLog {
+    param (
+        [PSCustomObject]$errorDetails
+    )
+    # Your implementation to insert the audit log
+    # This is just a placeholder for actual logging
+    Write-Host "Audit Log: $($errorDetails | Out-String)"
+}
+
+function GetEventLogs {
+    param (
+        [string]$computerName
+    )
+    try {
+        $events = Get-WinEvent -ComputerName $computerName -FilterHashtable @{
+            LogName = 'Security'
+            ID = 4624  # Event ID for successful logon
+        }
+
+        foreach ($event in $events) {
+            [PSCustomObject]$logDetails = @{
+                TimeCreated = $event.TimeCreated
+                ComputerName = $computerName
+                UserName = $event.Properties[5].Value  # SubjectUserName
+                LogonType = $event.Properties[8].Value  # LogonType
+            }
+            Write-Output $logDetails
+        }
+    } catch {
+        [PSCustomObject]$errorDetails = @{
+            Source = "$computerName"
+            ServiceName = "EventLogExtractor"
+            MethodName = "GetEventLogs"
+            Input = ""
+            Output = ""
+            Result = "Error"
+            Error = "Failed to retrieve event logs"
+            ErrorDetail = $_
+            StartTime = [datetime]::Now
+            EndTime = [datetime]::Now
+            UserId = 1
+        }
+        InsertAuditLog $errorDetails
+    }
+}
+
+function GetAllMachineEventLogs {
+    [datetime]$auditstartDateTime = [datetime]::Now
+    try {
+        if ($MachineList -eq $null) {
+            [string]$defaultNamingContext = ""
+            if ($DomainControllerLDAPPath -eq "LDAP://RootDSE") {
+                [System.DirectoryServices.DirectoryEntry]$rootDSE = New-Object -TypeName System.DirectoryServices.DirectoryEntry -ArgumentList $DomainControllerLDAPPath
+                $defaultNamingContext = "LDAP://" + $rootDSE.Properties["defaultNamingContext"][0].ToString()
+            } else {
+                $defaultNamingContext = $DomainControllerLDAPPath
+            }
+            [System.DirectoryServices.DirectoryEntry]$ldapConnection = New-Object -TypeName System.DirectoryServices.DirectoryEntry -ArgumentList $defaultNamingContext
+            $ldapConnection.AuthenticationType = [System.DirectoryServices.AuthenticationTypes]::Secure
+            [System.DirectoryServices.DirectorySearcher]$search = New-Object -TypeName System.DirectoryServices.DirectorySearcher -ArgumentList $ldapConnection
+            $search.Filter = "(objectCategory=computer)"
+            $search.PropertiesToLoad.Add("cn") > $null
+            [System.DirectoryServices.SearchResultCollection]$allMachines = $search.FindAll()
+            Set-Variable -Name "MachineList" -Value $allMachines -Scope Global
+        }
+
+        foreach ($machine in $MachineList) {
+            [System.DirectoryServices.SearchResult]$temp = $machine
+            if ($temp.Properties["cn"].Count -gt 0) {
+                [string]$name = $temp.Properties["cn"][0].ToString()
+                if ($ExcludedMachines -contains $name) {
+                    continue
+                }
+                try {
+                    Test-Connection -ComputerName $name -ErrorAction Stop | Out-Null
+                } catch {
+                    [PSCustomObject]$errorDetails = @{
+                        Source = "$name"
+                        ServiceName = "EventLogExtractor"
+                        MethodName = "Test-Connection"
+                        Input = ""
+                        Output = ""
+                        Result = "Error"
+                        Error = "ActiveDirectory"
+                        ErrorDetail = $_
+                        StartTime = $auditstartDateTime
+                        EndTime = [System.DateTime]::Now
+                        UserId = 1
+                    }
+                    InsertAuditLog $errorDetails
+                    continue
+                }
+                GetEventLogs $name
+            }
+        }
+
+    } catch {
+        [PSCustomObject]$errorDetails = @{
+            Source = "AD Server"
+            ServiceName = "EventLogExtractor"
+            MethodName = "GetAllMachineEventLogs"
+            Input = ""
+            Output = ""
+            Result = "Error"
+            Error = "ActiveDirectory"
+            ErrorDetail = $_
+            StartTime = $auditstartDateTime
+            EndTime = [System.DateTime]::Now
+            UserId = 1
+        }
+        InsertAuditLog $errorDetails
+    }
+}
+
+# Define the necessary variables
+$DomainControllerLDAPPath = "LDAP://RootDSE"
+$ExcludedMachines = @()  # List of machines to exclude
+$MachineList = $null
+
+# Call the main function
+GetAllMachineEventLogs
