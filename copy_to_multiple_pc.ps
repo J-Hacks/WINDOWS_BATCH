@@ -1,14 +1,25 @@
 # Define the source file path containing IPs
 $ipFilePath = "C:\path\to\your\ipfile.txt"
 
-# Read the IP addresses from the file into an array
-$computers = Get-Content $ipFilePath
-
 # Define the source file path
 $sourceFilePath = "C:\path\to\your\file.txt"
 
+# Read the IP addresses from the file into an array
+$computers = Get-Content $ipFilePath
+
 # Loop through each computer and copy the file
 foreach ($computer in $computers) {
-    $destinationPath = "\\$computer\C$\destination\path\file.txt"
-    Copy-Item $sourceFilePath $destinationPath -Force
+    try {
+        # Define the destination path
+        $destinationPath = "\\$computer\C$\destination\path\file.txt"
+        
+        # Copy the file to the destination
+        Copy-Item -Path $sourceFilePath -Destination $destinationPath -Force -ErrorAction Stop
+        
+        # If the copy operation is successful, write a success message
+        Write-Host "Successfully copied file to $computer"
+    } catch {
+        # If an error occurs, write an error message
+        Write-Host "Failed to copy file to $computer: $_"
+    }
 }
