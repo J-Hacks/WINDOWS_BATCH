@@ -1,0 +1,112 @@
+# Load required Visual Studio DLLs for TFS interaction
+$visualStudioDllPath = "C:\Program Files (x86)\Microsoft Visual Studio\2019\Professional\Common7\IDE\CommonExtensions\Microsoft\TeamFoundation\Team Explorer\"
+Add-Type -Path "$visualStudioDllPath\Microsoft.TeamFoundation.Client.dll"
+Add-Type -Path "$visualStudioDllPath\Microsoft.TeamFoundation.VersionControl.Client.dll"
+
+# Function to connect to TFS using Windows Authentication
+function Connect-TFS {
+    param (
+        [string]$tfsUrl
+    )
+
+    Write-Host "Connecting to TFS at $tfsUrl using Windows Authentication..."
+    $tfsUri = New-Object System.Uri($tfsUrl)
+    
+    # Connect to TFS using Windows Authentication (no credentials required)
+    $tfsCollection = [Microsoft.TeamFoundation.Client.TfsTeamProjectCollectionFactory]::GetTeamProjectCollection($tfsUri)
+    $tfsCollection.EnsureAuthenticated()
+    return $tfsCollection
+}
+
+# Function to validate a changeset and ensure it belongs to the branch
+function Validate-Changeset {
+    param (
+        [Microsoft.TeamFoundation.VersionControl.Client.VersionControlServer]$versionControl,
+        [string]$branchPath,   # TFS branch to validate the changeset against
+        [int]$changesetId      # Changeset ID to validate
+    )
+
+    Write-Host "Validating if changeset $changesetId belongs to branch $branchPath..."
+
+    # Get the changeset details
+    $changeset = $versionControl.GetChangeset($changesetId)
+
+    # Check if the changeset affects the specified branch
+    foreach ($change in $changeset.Changes) {
+        if ($change.Item.ServerItem -like "$branchPath*") {
+            Write-Host "Changeset $changesetId is valid for branch $branchPath."
+            return $true
+        }
+    }
+
+    Write-Host "Changeset $changesetId does not belong to branch $branchPath."
+    return $false
+}
+
+# Function to commit files to the SIT branch in TFS
+function Commit-FilesToSIT {
+    param (
+        [string]$tfsUrl,
+        [string]$localPath,      # Local path where the files are located
+        [int]$changesetId,       # Changeset ID being promoted
+        [string]$sitBranchPath   # Target SIT branch to commit to (e.g., $/Project/SIT)
+    )
+
+    Write-Host "Mapping SIT branch to local folder..."
+
+    # Map SIT branch to the local workspace
+    tf workfold /map $sitBranchPath $localPath /collection:$tfsUrl
+
+    Write-Host "Adding changes to SIT branch in TFS pending changes..."
+
+    # Add the changes from the local folder to pending changes
+    tf add $localPath /recursive
+
+    # Generate commit message
+    $commitMessage = "Changeset up to $changesetId"
+
+    Write-Host "Checking in the changes to SIT branch with message: '$commitMessage'..."
+
+    # Check-in the changes with the generated commit message
+    tf checkin $localPath /comment:$commitMessage /recursive
+}
+
+# Function to delete the local workspace after the commit
+function Delete-LocalWorkspace {
+    param (
+        [string]$localPath  # Local path mapped to the workspace
+    )
+
+    Write-Host "Deleting the local workspace..."
+
+    # Delete the workspace and unmap the local folder
+    tf workspace /delete /noprompt
+    Write-Host "Local workspace deleted."
+}
+
+# Main script logic
+$tfsUrl = "http://tfs.yourserver.com:8080/tfs/DefaultCollection"
+$devBranchPath = "$/Project/DEV"
+$sitBranchPath = "$/Project/SIT"
+$localPath = "C:\TFS\Workspace"
+
+# Step 1: Prompt for the changeset number
+$changesetId = Read-Host "Please enter the changeset number from DEV branch"
+
+# Connect to TFS using Windows Authentication
+$tfsCollection = Connect-TFS -tfsUrl $tfsUrl
+$versionControl = $tfsCollection.GetService([Microsoft.TeamFoundation.VersionControl.Client.VersionControlServer])
+
+# Step 2: Validate the changeset
+$changesetValid = Validate-Changeset -versionControl $versionControl -branchPath $devBranchPath -changesetId $changesetId
+
+if ($changesetValid -eq $false) {
+    Write-Host "Exiting script as the changeset is not valid for DEV branch."
+    exit
+}
+
+# Step 3: Commit files to SIT branch with the changeset number in the commit message
+Commit-FilesToSIT -tfsUrl $tfsUrl -localPath $localPath -changesetId $changesetId -sitBranchPath $sitBranchPath
+
+# Step 4: Delete the local workspace after commit
+Delete-LocalWorkspace -localPath $localPath
